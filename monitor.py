@@ -4,9 +4,9 @@ import pandas as pd
 from fredapi import Fred
 
 # 1. 讀取環境變數 (由 GitHub Secrets 安全注入)
-FRED_KEY = os.getenv("FRED_API_KEY")
-TG_BOT_TOKEN = os.getenv("TG_BOT_TOKEN")
-TG_CHAT_ID = os.getenv("TG_CHAT_ID")
+FRED_KEY = os.getenv("463bece8c636da65c58c0fff9c6c7928")
+TG_BOT_TOKEN = os.getenv("8892748753:AAGY5T6-KCir7_DrQbteWjtglajctZcZoZ4")
+TG_CHAT_ID = os.getenv("ethan_eco_bot")
 
 if not FRED_KEY:
     raise ValueError("找不到 FRED_API_KEY，請確認 GitHub Secrets 設定。")
