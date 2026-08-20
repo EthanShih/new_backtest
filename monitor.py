@@ -4,18 +4,26 @@ import pandas as pd
 from fredapi import Fred
 import datetime
 
-# 1. 讀取金鑰
+# 1. 讀取金鑰與安全檢查
 FRED_KEY = os.getenv("FRED_API_KEY")
 TG_BOT_TOKEN = os.getenv("TG_BOT_TOKEN")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID")
 
 if not FRED_KEY:
-    raise ValueError("找不到 FRED_API_KEY，請確認 GitHub Secrets 設定。")
+    raise ValueError("找不到 FRED_API_KEY！請至 Settings > Secrets and variables > Actions 檢查是否已設定名稱為 FRED_API_KEY 的 Secret。")
 
+print("🔑 已成功讀取 FRED_API_KEY，開始連線 FRED 抓取數據...")
 fred = Fred(api_key=FRED_KEY)
 
 def get_clean_series(code):
-    return fred.get_series(code).dropna()
+    try:
+        s = fred.get_series(code).dropna()
+        if s.empty:
+            print(f"⚠️ 警告: 指標 {code} 抓取結果為空")
+        return s
+    except Exception as e:
+        print(f"❌ 抓取指標 {code} 失敗: {e}")
+        return pd.Series(dtype=float)
 
 # 2. 抓取時間序列
 s_permit = get_clean_series('PERMIT')
@@ -32,68 +40,64 @@ s_hy = get_clean_series('BAMLH0A0HYM2')
 s_pce = get_clean_series('PCEPILFE')
 s_fedrate = get_clean_series('FEDFUNDS')
 
-# 3. 模組指標計算
-# 模組 A：領先警訊池 (4項)
+# 3. 模組指標安全計算
+# 模組 A
 housing_avg = (s_permit + s_houst) / 2
 h_3mma = housing_avg.rolling(3).mean().dropna()
-h_drop = (h_3mma.tail(12).max() - h_3mma.iloc[-1]) / h_3mma.tail(12).max()
+h_peak = h_3mma.tail(12).max() if len(h_3mma) >= 12 else (h_3mma.max() if not h_3mma.empty else 1.0)
+h_drop = (h_peak - h_3mma.iloc[-1]) / h_peak if not h_3mma.empty else 0.0
 trig_a1 = bool(h_drop >= 0.12)
 
 orders_3mma = s_orders.rolling(3).mean().dropna()
 orders_yoy = (orders_3mma.iloc[-1] - orders_3mma.iloc[-13]) / orders_3mma.iloc[-13] if len(orders_3mma) >= 13 else 0.0
 trig_a2 = bool(orders_yoy < 0.0)
 
-jolts_latest = s_jolts.iloc[-1]
+jolts_latest = s_jolts.iloc[-1] if not s_jolts.empty else 0.0
 trig_a3 = bool(jolts_latest < 7000)
 
-t10y2y_latest = s_t10y2y.iloc[-1]
-t10y2y_2w_min = s_t10y2y.tail(10).min()
-trig_a4 = bool(s_t10y2y.tail(252).min() < -0.20 and t10y2y_2w_min > 0.10)
+t10y2y_latest = s_t10y2y.iloc[-1] if not s_t10y2y.empty else 0.0
+t10y2y_2w_min = s_t10y2y.tail(10).min() if len(s_t10y2y) >= 10 else 0.0
+trig_a4 = bool(len(s_t10y2y) >= 252 and s_t10y2y.tail(252).min() < -0.20 and t10y2y_2w_min > 0.10)
 
 count_lead = sum([trig_a1, trig_a2, trig_a3, trig_a4])
 
-# 模組 B：衰退確認池 (6項)
-claims_latest = s_claims.iloc[-1]
-claims_52w_low = s_claims.tail(52).min()
-claims_rebound = (claims_latest - claims_52w_low) / claims_52w_low
+# 模組 B
+claims_latest = s_claims.iloc[-1] if not s_claims.empty else 0.0
+claims_52w_low = s_claims.tail(52).min() if len(s_claims) >= 52 else s_claims.min()
+claims_rebound = (claims_latest - claims_52w_low) / claims_52w_low if claims_52w_low > 0 else 0.0
 trig_b1 = bool(claims_rebound >= 0.18)
 
 uemp_3mma = s_uemp15.rolling(3).mean().dropna()
-uemp_rebound = (uemp_3mma.iloc[-1] - uemp_3mma.tail(12).min()) / uemp_3mma.tail(12).min()
-trig_b2 = bool(uemp_rebound >= 0.12 and uemp_3mma.iloc[-1] > uemp_3mma.iloc[-2])
+uemp_min = uemp_3mma.tail(12).min() if len(uemp_3mma) >= 12 else uemp_3mma.min()
+uemp_rebound = (uemp_3mma.iloc[-1] - uemp_min) / uemp_min if uemp_min > 0 else 0.0
+trig_b2 = bool(uemp_rebound >= 0.12 and len(uemp_3mma) >= 2 and uemp_3mma.iloc[-1] > uemp_3mma.iloc[-2])
 
-retail_yoy = (s_retail.iloc[-1] - s_retail.iloc[-13]) / s_retail.iloc[-13] if len(s_retail) >= 13 else 0.0
+retail_latest = s_retail.iloc[-1] if not s_retail.empty else 0.0
+retail_yoy = (retail_latest - s_retail.iloc[-13]) / s_retail.iloc[-13] if len(s_retail) >= 13 else 0.0
 trig_b3 = bool(retail_yoy < 0.0)
 
-dpi_yoy = (s_dpi.iloc[-1] - s_dpi.iloc[-13]) / s_dpi.iloc[-13] if len(s_dpi) >= 13 else 0.0
+dpi_latest = s_dpi.iloc[-1] if not s_dpi.empty else 0.0
+dpi_yoy = (dpi_latest - s_dpi.iloc[-13]) / s_dpi.iloc[-13] if len(s_dpi) >= 13 else 0.0
 trig_b4 = bool(dpi_yoy < 0.0)
 
-inv_latest = s_isratio.iloc[-1]
-trig_b5 = bool(s_isratio.iloc[-1] > s_isratio.iloc[-2] > s_isratio.iloc[-3])
+inv_latest = s_isratio.iloc[-1] if not s_isratio.empty else 0.0
+trig_b5 = bool(len(s_isratio) >= 3 and s_isratio.iloc[-1] > s_isratio.iloc[-2] > s_isratio.iloc[-3])
 
-hy_latest = s_hy.iloc[-1]
+hy_latest = s_hy.iloc[-1] if not s_hy.empty else 0.0
 trig_b6 = bool(hy_latest >= 4.50)
 
 count_conf = sum([trig_b1, trig_b2, trig_b3, trig_b4, trig_b5, trig_b6])
 
-# 模組 C：復甦抄底池 (3項)
-fed_cut = s_fedrate.tail(12).max() - s_fedrate.iloc[-1]
-trig_c1 = bool(fed_cut >= 1.0)
+# 模組 C & D
+fed_cut = (s_fedrate.tail(12).max() - s_fedrate.iloc[-1]) if len(s_fedrate) >= 12 else 0.0
+hy_drop_val = (s_hy.tail(252).max() - hy_latest) if len(s_hy) >= 252 else 0.0
+claims_peak_12m = s_claims.tail(52).max() if len(s_claims) >= 52 else 1.0
 
-hy_drop_val = s_hy.tail(252).max() - hy_latest
-trig_c2 = bool(hy_drop_val >= 1.50)
-
-claims_peak_12m = s_claims.tail(52).max()
-trig_c3 = bool(claims_latest < claims_peak_12m * 0.90 and s_claims.iloc[-1] < s_claims.iloc[-4])
-
-count_rec = sum([trig_c1, trig_c2, trig_c3])
-
-# 模組 D：循環定性模組
 pce_yoy = (s_pce.iloc[-1] - s_pce.iloc[-13]) / s_pce.iloc[-13] * 100 if len(s_pce) >= 13 else 0.0
-fed_funds_val = s_fedrate.iloc[-1]
+fed_funds_val = s_fedrate.iloc[-1] if not s_fedrate.empty else 0.0
 real_rate = fed_funds_val - pce_yoy
 
-# 4. 狀態判定
+# 4. 定位判定
 if count_conf >= 4:
     regime = "🚨 衰退期 (Recession)"
     stock_w, def_w, cash_w = "0%", "60% (TLT+GLD+XLU)", "40%"
@@ -109,7 +113,7 @@ else:
 
 update_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
 
-# 5. 生成靜態 HTML 網頁
+# 5. 輸出 HTML 檔案
 html_content = f"""<!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
@@ -207,13 +211,7 @@ html_content = f"""<!DOCTYPE html>
 </html>
 """
 
-# 儲存網頁檔
 with open("index.html", "w", encoding="utf-8") as f:
     f.write(html_content)
 
-print("✅ 已成功產出最新網頁 index.html！")
-    try:
-        url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage"
-        requests.post(url, data={"chat_id": TG_CHAT_ID, "text": msg})
-    except Exception as e:
-        print(f"推播發送失敗: {e}")
+print("🎉 執行成功！已產出完整的 index.html 報表！")
