@@ -2,7 +2,7 @@ name: Weekly Macro Check
 
 on:
   schedule:
-    - cron: '0 0 * * 6' # 每週六 08:00 (UTC+8)
+    - cron: '0 0 * * 6'
   workflow_dispatch:
 
 permissions:
@@ -12,6 +12,9 @@ permissions:
 
 jobs:
   build-and-deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -33,7 +36,10 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: python monitor.py
 
-      - name: Upload GitHub Pages Artifact
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload Artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: '.'
