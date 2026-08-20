@@ -2,35 +2,42 @@ name: Weekly Macro Check
 
 on:
   schedule:
-    # 每週六 00:00 UTC (等於台灣時間週六早上 08:00) 自動執行
-    - cron: '0 0 * * 6'
-  # 允許在 GitHub 網頁手動點擊按鈕立即執行
+    - cron: '0 0 * * 6' # 每週六 08:00 (UTC+8)
   workflow_dispatch:
 
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
 jobs:
-  macro-diagnosis:
+  build-and-deploy:
     runs-on: ubuntu-latest
     steps:
-      # 1. 檢出儲存庫程式碼
-      - name: Checkout Repository
+      - name: Checkout Code
         uses: actions/checkout@v3
 
-      # 2. 安裝 Python 環境
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
-      # 3. 安裝必要套件
       - name: Install Dependencies
         run: |
-          pip install --upgrade pip
           pip install fredapi pandas requests
 
-      # 4. 執行總經監控腳本並注入 Secrets
-      - name: Run Macro Monitor
+      - name: Run Macro Monitor & Generate HTML
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: python monitor.py
+
+      - name: Upload GitHub Pages Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
