@@ -4,7 +4,7 @@ import pandas as pd
 from fredapi import Fred
 import datetime
 
-# 1. 讀取金鑰與安全檢查
+# 1. 讀取金鑰
 FRED_KEY = os.getenv("FRED_API_KEY")
 TG_BOT_TOKEN = os.getenv("TG_BOT_TOKEN")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID")
@@ -37,15 +37,15 @@ s_hy = get_clean_series('BAMLH0A0HYM2')
 s_pce = get_clean_series('PCEPILFE')
 s_fedrate = get_clean_series('FEDFUNDS')
 
-# 輔助函式：格式化變動標記
+# 輔助函式：統一格式化為小數點後 2 位
 def format_diff(curr, prev, fmt="{:+.2f}", unit=""):
     diff = curr - prev
-    if abs(diff) < 1e-5:
-        return f"{prev}{unit} (持平)"
+    if abs(diff) < 1e-4:
+        return f"{prev:.2f}{unit} (持平)"
     symbol = "🔺" if diff > 0 else "🔻"
-    return f"{prev}{unit} ({symbol} {fmt.format(diff)}{unit})"
+    return f"{prev:.2f}{unit} ({symbol} {fmt.format(diff)}{unit})"
 
-# 3. 模組指標安全計算 (含當期 vs 前期)
+# 3. 模組指標安全計算
 # --- 模組 A：領先警訊池 ---
 # 1. 房市雙指標 (3MMA)
 housing_avg = (s_permit + s_houst) / 2
@@ -55,7 +55,7 @@ h_prev = h_3mma.iloc[-2]
 h_peak = h_3mma.tail(12).max()
 h_drop = (h_peak - h_curr) / h_peak
 trig_a1 = bool(h_drop >= 0.12)
-h_diff_str = format_diff(h_curr/1000, h_prev/1000, fmt="{:+.1f}", unit=" 萬戶")
+h_diff_str = format_diff(h_curr/10, h_prev/10, fmt="{:+.2f}", unit=" 萬戶")
 
 # 2. 核心耐久財新訂單
 orders_3mma = s_orders.rolling(3).mean().dropna()
@@ -68,26 +68,26 @@ orders_diff_str = format_diff(orders_yoy_curr, orders_yoy_prev, fmt="{:+.2f}", u
 jolts_curr = s_jolts.iloc[-1]
 jolts_prev = s_jolts.iloc[-2]
 trig_a3 = bool(jolts_curr < 7000)
-jolts_diff_str = format_diff(jolts_curr, jolts_prev, fmt="{:+.0f}", unit=" 千人")
+jolts_diff_str = format_diff(jolts_curr, jolts_prev, fmt="{:+.2f}", unit=" 千人")
 
-# 4. 10Y-2Y 倒掛轉正陡峭化 (納入60天時序校準)
+# 4. 10Y-2Y 倒掛轉正陡峭化
 t10y2y_curr = s_t10y2y.iloc[-1]
 t10y2y_prev = s_t10y2y.iloc[-2]
 inversion_in_60d = bool(s_t10y2y.tail(60).min() < -0.05)
 currently_steep = bool(s_t10y2y.tail(10).min() > 0.10)
 trig_a4 = bool(inversion_in_60d and currently_steep)
-t10y2y_diff_str = format_diff(t10y2y_curr*100, t10y2y_prev*100, fmt="{:+.0f}", unit=" bps")
+t10y2y_diff_str = format_diff(t10y2y_curr*100, t10y2y_prev*100, fmt="{:+.2f}", unit=" bps")
 
 count_lead = sum([trig_a1, trig_a2, trig_a3, trig_a4])
 
 # --- 模組 B：衰退確認池 ---
-# 1. 初領失業金 4W
+# 1. 初領失業金 4W (修正單位：除以 10000 換算為萬人)
 claims_curr = s_claims.iloc[-1]
 claims_prev = s_claims.iloc[-2]
 claims_52w_low = s_claims.tail(52).min()
 claims_rebound = (claims_curr - claims_52w_low) / claims_52w_low
 trig_b1 = bool(claims_rebound >= 0.18)
-claims_diff_str = format_diff(claims_curr/1000, claims_prev/1000, fmt="{:+.2f}", unit=" 萬人")
+claims_diff_str = format_diff(claims_curr/10000, claims_prev/10000, fmt="{:+.2f}", unit=" 萬人")
 
 # 2. 短期失業人數 (15週以下)
 uemp_3mma = s_uemp15.rolling(3).mean().dropna()
@@ -96,7 +96,7 @@ uemp_prev = uemp_3mma.iloc[-2]
 uemp_min = uemp_3mma.tail(12).min()
 uemp_rebound = (uemp_curr - uemp_min) / uemp_min
 trig_b2 = bool(uemp_rebound >= 0.12 and uemp_curr > uemp_prev)
-uemp_diff_str = format_diff(uemp_curr, uemp_prev, fmt="{:+.0f}", unit=" 千人")
+uemp_diff_str = format_diff(uemp_curr, uemp_prev, fmt="{:+.2f}", unit=" 千人")
 
 # 3. 實質零售銷售年增率
 retail_yoy_curr = (s_retail.iloc[-1] - s_retail.iloc[-13]) / s_retail.iloc[-13] * 100 if len(s_retail) >= 13 else 0.0
@@ -120,7 +120,7 @@ inv_diff_str = format_diff(inv_curr, inv_prev, fmt="{:+.2f}", unit="")
 hy_curr = s_hy.iloc[-1]
 hy_prev = s_hy.iloc[-2]
 trig_b6 = bool(hy_curr >= 4.50)
-hy_diff_str = format_diff(hy_curr*100, hy_prev*100, fmt="{:+.0f}", unit=" bps")
+hy_diff_str = format_diff(hy_curr*100, hy_prev*100, fmt="{:+.2f}", unit=" bps")
 
 count_conf = sum([trig_b1, trig_b2, trig_b3, trig_b4, trig_b5, trig_b6])
 
@@ -153,7 +153,7 @@ else:
 
 update_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
 
-# 5. 生成精美 HTML 網頁 (含前值比對欄位)
+# 5. 生成精美 HTML 網頁
 html_content = f"""<!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
@@ -206,10 +206,10 @@ html_content = f"""<!DOCTYPE html>
         <h2>⚠️ 模組 A：領先警訊池 (觸發: {count_lead}/4 ｜ 門檻: >= 3項)</h2>
         <table>
             <tr><th>指標名稱</th><th>最新數據 (現況)</th><th>前值 (前期變動)</th><th>判斷門檻</th><th>狀態燈號</th><th>FRED 連結</th></tr>
-            <tr><td>房市雙指標 (3MMA)</td><td>{h_curr/1000:.1f} 萬戶 (回落 {h_drop*100:.1f}%)</td><td class="diff-tag">{h_diff_str}</td><td>自高點回落 >= 12%</td><td class="{'badge-red' if trig_a1 else 'badge-green'}">{'🔴 觸發' if trig_a1 else '🟢 正常'}</td><td><a href="https://fred.stlouisfed.org/series/PERMIT" target="_blank">PERMIT</a> / <a href="https://fred.stlouisfed.org/series/HOUST" target="_blank">HOUST</a></td></tr>
+            <tr><td>房市雙指標 (3MMA)</td><td>{h_curr/10:.2f} 萬戶 (回落 {h_drop*100:.2f}%)</td><td class="diff-tag">{h_diff_str}</td><td>自高點回落 >= 12%</td><td class="{'badge-red' if trig_a1 else 'badge-green'}">{'🔴 觸發' if trig_a1 else '🟢 正常'}</td><td><a href="https://fred.stlouisfed.org/series/PERMIT" target="_blank">PERMIT</a> / <a href="https://fred.stlouisfed.org/series/HOUST" target="_blank">HOUST</a></td></tr>
             <tr><td>核心耐久財新訂單 (3MMA YoY)</td><td>YoY {orders_yoy_curr:+.2f}%</td><td class="diff-tag">{orders_diff_str}</td><td>年增率 < 0%</td><td class="{'badge-red' if trig_a2 else 'badge-green'}">{'🔴 觸發' if trig_a2 else '🟢 正常'}</td><td><a href="https://fred.stlouisfed.org/series/ANDENO" target="_blank">ANDENO</a></td></tr>
-            <tr><td>JOLTS 職位空缺數</td><td>{jolts_curr:,.0f} 千人</td><td class="diff-tag">{jolts_diff_str}</td><td>跌破常態 (< 7,000 千人)</td><td class="{'badge-red' if trig_a3 else 'badge-green'}">{'🔴 觸發' if trig_a3 else '🟢 正常'}</td><td><a href="https://fred.stlouisfed.org/series/JTSJOL" target="_blank">JTSJOL</a></td></tr>
-            <tr><td>10Y-2Y 殖利率曲線陡峭化</td><td>{t10y2y_curr*100:.0f} bps</td><td class="diff-tag">{t10y2y_diff_str}</td><td>近60天倒掛轉正且>10bps</td><td class="{'badge-red' if trig_a4 else 'badge-green'}">{'🔴 觸發' if trig_a4 else '🟢 正常'}</td><td><a href="https://fred.stlouisfed.org/series/T10Y2Y" target="_blank">T10Y2Y</a></td></tr>
+            <tr><td>JOLTS 職位空缺數</td><td>{jolts_curr:,.2f} 千人</td><td class="diff-tag">{jolts_diff_str}</td><td>跌破常態 (< 7,000 千人)</td><td class="{'badge-red' if trig_a3 else 'badge-green'}">{'🔴 觸發' if trig_a3 else '🟢 正常'}</td><td><a href="https://fred.stlouisfed.org/series/JTSJOL" target="_blank">JTSJOL</a></td></tr>
+            <tr><td>10Y-2Y 殖利率曲線陡峭化</td><td>{t10y2y_curr*100:.2f} bps</td><td class="diff-tag">{t10y2y_diff_str}</td><td>近60天倒掛轉正且>10bps</td><td class="{'badge-red' if trig_a4 else 'badge-green'}">{'🔴 觸發' if trig_a4 else '🟢 正常'}</td><td><a href="https://fred.stlouisfed.org/series/T10Y2Y" target="_blank">T10Y2Y</a></td></tr>
         </table>
     </div>
 
@@ -217,12 +217,12 @@ html_content = f"""<!DOCTYPE html>
         <h2>🚨 模組 B：衰退確認池 (觸發: {count_conf}/6 ｜ 門檻: >= 4項)</h2>
         <table>
             <tr><th>指標名稱</th><th>最新數據 (現況)</th><th>前值 (前期變動)</th><th>判斷門檻</th><th>狀態燈號</th><th>FRED 連結</th></tr>
-            <tr><td>初領失業金 4週均線</td><td>{claims_curr/1000:.2f} 萬人 (反彈 {claims_rebound*100:.1f}%)</td><td class="diff-tag">{claims_diff_str}</td><td>自低點反彈 >= 18%</td><td class="{'badge-red' if trig_b1 else 'badge-green'}">{'🔴 觸發' if trig_b1 else '🟢 正常'}</td><td><a href="https://fred.stlouisfed.org/series/IC4WSA" target="_blank">IC4WSA</a></td></tr>
-            <tr><td>短期失業人數 (15週以下)</td><td>{uemp_curr:,.0f} 千人 (反彈 {uemp_rebound*100:.1f}%)</td><td class="diff-tag">{uemp_diff_str}</td><td>自低點反彈 >= 12% 且向上</td><td class="{'badge-red' if trig_b2 else 'badge-green'}">{'🔴 觸發' if trig_b2 else '🟢 正常'}</td><td><a href="https://fred.stlouisfed.org/series/UEMP15T26" target="_blank">UEMP15T26</a></td></tr>
+            <tr><td>初領失業金 4週均線</td><td>{claims_curr/10000:.2f} 萬人 (反彈 {claims_rebound*100:.2f}%)</td><td class="diff-tag">{claims_diff_str}</td><td>自低點反彈 >= 18%</td><td class="{'badge-red' if trig_b1 else 'badge-green'}">{'🔴 觸發' if trig_b1 else '🟢 正常'}</td><td><a href="https://fred.stlouisfed.org/series/IC4WSA" target="_blank">IC4WSA</a></td></tr>
+            <tr><td>短期失業人數 (15週以下)</td><td>{uemp_curr:,.2f} 千人 (反彈 {uemp_rebound*100:.2f}%)</td><td class="diff-tag">{uemp_diff_str}</td><td>自低點反彈 >= 12% 且向上</td><td class="{'badge-red' if trig_b2 else 'badge-green'}">{'🔴 觸發' if trig_b2 else '🟢 正常'}</td><td><a href="https://fred.stlouisfed.org/series/UEMP15T26" target="_blank">UEMP15T26</a></td></tr>
             <tr><td>實質零售銷售年增率</td><td>實質 YoY {retail_yoy_curr:+.2f}%</td><td class="diff-tag">{retail_diff_str}</td><td>年增率 < 0.0%</td><td class="{'badge-red' if trig_b3 else 'badge-green'}">{'🔴 觸發' if trig_b3 else '🟢 正常'}</td><td><a href="https://fred.stlouisfed.org/series/RRSFS" target="_blank">RRSFS</a></td></tr>
             <tr><td>實質個人可支配所得年增率</td><td>實質 DPI YoY {dpi_yoy_curr:+.2f}%</td><td class="diff-tag">{dpi_diff_str}</td><td>年增率 < 0.0%</td><td class="{'badge-red' if trig_b4 else 'badge-green'}">{'🔴 觸發' if trig_b4 else '🟢 正常'}</td><td><a href="https://fred.stlouisfed.org/series/DSPIC96" target="_blank">DSPIC96</a></td></tr>
             <tr><td>企業存貨 / 銷售比</td><td>{inv_curr:.2f}</td><td class="diff-tag">{inv_diff_str}</td><td>連續 3 個月被動積壓飆升</td><td class="{'badge-red' if trig_b5 else 'badge-green'}">{'🔴 觸發' if trig_b5 else '🟢 正常'}</td><td><a href="https://fred.stlouisfed.org/series/ISRATIO" target="_blank">ISRATIO</a></td></tr>
-            <tr><td>高收益債信用利差 (HY OAS)</td><td>{hy_curr*100:.0f} bps</td><td class="diff-tag">{hy_diff_str}</td><td>利差突破 450 bps</td><td class="{'badge-red' if trig_b6 else 'badge-green'}">{'🔴 觸發' if trig_b6 else '🟢 正常'}</td><td><a href="https://fred.stlouisfed.org/series/BAMLH0A0HYM2" target="_blank">BAMLH0A0HYM2</a></td></tr>
+            <tr><td>高收益債信用利差 (HY OAS)</td><td>{hy_curr*100:.2f} bps</td><td class="diff-tag">{hy_diff_str}</td><td>利差突破 450 bps</td><td class="{'badge-red' if trig_b6 else 'badge-green'}">{'🔴 觸發' if trig_b6 else '🟢 正常'}</td><td><a href="https://fred.stlouisfed.org/series/BAMLH0A0HYM2" target="_blank">BAMLH0A0HYM2</a></td></tr>
         </table>
     </div>
 
@@ -253,4 +253,4 @@ html_content = f"""<!DOCTYPE html>
 with open("index.html", "w", encoding="utf-8") as f:
     f.write(html_content)
 
-print("🎉 執行成功！已產出包含前值對照欄位的 index.html 報表！")
+print("🎉 執行成功！已修正單位並將小數點統一限制為 2 位！")
