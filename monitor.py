@@ -54,13 +54,48 @@ s_hy, rec_hy = get_series_with_meta('BAMLH0A0HYM2')
 s_pce, rec_pce = get_series_with_meta('PCEPILFE')
 s_fedrate, rec_fedrate = get_series_with_meta('FEDFUNDS')
 
-# 輔助：格式化前 3 期數據 (T-1 / T-2 / T-3)
-def format_past_3(t1, t2, t3, unit="", fmt="{:.2f}"):
-    return (
-        f"<span class='history-tag'>T-1: <b>{fmt.format(t1)}{unit}</b></span> "
-        f"<span class='history-tag'>T-2: <b>{fmt.format(t2)}{unit}</b></span> "
-        f"<span class='history-tag'>T-3: <b>{fmt.format(t3)}{unit}</b></span>"
-    )
+# 輔助：生成純 SVG 迷你走勢圖 (Sparkline)
+def render_sparkline(vals, unit="", fmt="{:.2f}"):
+    """傳入 [t3, t2, t1, t0]，輸出內嵌 SVG 折線圖與節點文字"""
+    w, h, pad = 120, 32, 6
+    min_v, max_v = min(vals), max(vals)
+    rng = max_v - min_v if max_v != min_v else 1.0
+    
+    # 計算 4 點座標
+    pts = []
+    for i, v in enumerate(vals):
+        x = pad + i * ((w - 2 * pad) / 3)
+        y = h - pad - ((v - min_v) / rng) * (h - 2 * pad)
+        pts.append((x, y))
+    
+    polyline_pts = " ".join([f"{x:.1f},{y:.1f}" for x, y in pts])
+    
+    # 判斷整體趨勢顏色 (末點 vs 首點)
+    trend_color = "#2563eb" # 經典藍
+    if vals[-1] > vals[0]:
+        trend_color = "#0284c7"
+    elif vals[-1] < vals[0]:
+        trend_color = "#64748b"
+
+    # 生成 SVG 節點圓點
+    circles = ""
+    for i, (x, y) in enumerate(pts):
+        r = "4" if i == 3 else "2.5"
+        fill = "#2563eb" if i == 3 else "#94a3b8"
+        circles += f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r}" fill="{fill}" />'
+    
+    svg = f"""
+    <div class="spark-wrapper">
+        <svg width="{w}" height="{h}" class="sparkline">
+            <polyline fill="none" stroke="{trend_color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" points="{polyline_pts}" />
+            {circles}
+        </svg>
+        <div class="spark-labels">
+            <span>{fmt.format(vals[0])}</span> → <span>{fmt.format(vals[1])}</span> → <span>{fmt.format(vals[2])}</span> → <b>{fmt.format(vals[3])}{unit}</b>
+        </div>
+    </div>
+    """
+    return svg
 
 # 輔助：渲染最新數據儲存格 (若近7日內更新則高亮標註)
 def render_curr_cell(curr_str, is_recent):
@@ -68,108 +103,94 @@ def render_curr_cell(curr_str, is_recent):
         return f"<td class='highlight-cell'>{curr_str} <span class='badge-new'>✨ 7日內更新</span></td>"
     return f"<td>{curr_str}</td>"
 
-# 3. 模組指標安全計算 (含 T, T-1, T-2, T-3)
+# 3. 模組指標安全計算
 # ==================== 模組 A：領先警訊池 (6項) ====================
 # 1. 房市雙指標 (3MMA)
 housing_avg = (s_permit + s_houst) / 2
 h_3mma = housing_avg.rolling(3).mean().dropna()
-h_t0, h_t1, h_t2, h_t3 = h_3mma.iloc[-1], h_3mma.iloc[-2], h_3mma.iloc[-3], h_3mma.iloc[-4]
+h_vals = [h_3mma.iloc[-4]/10, h_3mma.iloc[-3]/10, h_3mma.iloc[-2]/10, h_3mma.iloc[-1]/10]
 h_peak = h_3mma.tail(12).max()
-h_drop = (h_peak - h_t0) / h_peak
+h_drop = (h_peak - h_3mma.iloc[-1]) / h_peak
 trig_a1 = bool(h_drop >= 0.12)
-h_past3_str = format_past_3(h_t1/10, h_t2/10, h_t3/10, unit=" 萬戶")
+h_spark = render_sparkline(h_vals, unit=" 萬戶", fmt="{:.1f}")
 
 # 2. 核心耐久財新訂單 (3MMA YoY)
 orders_3mma = s_orders.rolling(3).mean().dropna()
 def get_order_yoy(idx):
     return (orders_3mma.iloc[idx] - orders_3mma.iloc[idx-12]) / orders_3mma.iloc[idx-12] * 100
-o_yoy_t0 = get_order_yoy(-1)
-o_yoy_t1 = get_order_yoy(-2)
-o_yoy_t2 = get_order_yoy(-3)
-o_yoy_t3 = get_order_yoy(-4)
-trig_a2 = bool(o_yoy_t0 < 0.0)
-orders_past3_str = format_past_3(o_yoy_t1, o_yoy_t2, o_yoy_t3, unit="%", fmt="{:+.2f}")
+o_vals = [get_order_yoy(-4), get_order_yoy(-3), get_order_yoy(-2), get_order_yoy(-1)]
+trig_a2 = bool(o_vals[-1] < 0.0)
+o_spark = render_sparkline(o_vals, unit="%", fmt="{:+.2f}")
 
 # 3. JOLTS 職位空缺數
-j_t0, j_t1, j_t2, j_t3 = s_jolts.iloc[-1], s_jolts.iloc[-2], s_jolts.iloc[-3], s_jolts.iloc[-4]
-trig_a3 = bool(j_t0 < 7000)
-jolts_past3_str = format_past_3(j_t1, j_t2, j_t3, unit=" 千人", fmt="{:,.0f}")
+j_vals = [s_jolts.iloc[-4], s_jolts.iloc[-3], s_jolts.iloc[-2], s_jolts.iloc[-1]]
+trig_a3 = bool(j_vals[-1] < 7000)
+j_spark = render_sparkline(j_vals, unit="k", fmt="{:,.0f}")
 
-# 4. 10Y-2Y 殖利率曲線陡峭化 (時序限制校準)
-t10y2y_t0 = s_t10y2y.iloc[-1]
-t10y2y_t1 = s_t10y2y.iloc[-2]
-t10y2y_t2 = s_t10y2y.iloc[-3]
-t10y2y_t3 = s_t10y2y.iloc[-4]
+# 4. 10Y-2Y 殖利率曲線陡峭化
+t_vals = [s_t10y2y.iloc[-4]*100, s_t10y2y.iloc[-3]*100, s_t10y2y.iloc[-2]*100, s_t10y2y.iloc[-1]*100]
 inversion_in_60d = bool(s_t10y2y.tail(60).min() < -0.05)
 currently_steep = bool(s_t10y2y.tail(10).min() > 0.10)
 trig_a4 = bool(inversion_in_60d and currently_steep)
-t10y2y_past3_str = format_past_3(t10y2y_t1*100, t10y2y_t2*100, t10y2y_t3*100, unit=" bps", fmt="{:+.0f}")
+t_spark = render_sparkline(t_vals, unit=" bps", fmt="{:+.0f}")
 
 # 5. 美國 ISM 製造業 PMI
-# (以市場即時基準序列追蹤，榮枯線 50.0，警訊 < 49.0)
-ism_m_t0, ism_m_t1, ism_m_t2, ism_m_t3 = 49.60, 48.50, 48.70, 49.20
-trig_a5 = bool(ism_m_t0 < 49.00)
-ism_m_past3_str = format_past_3(ism_m_t1, ism_m_t2, ism_m_t3, unit="")
+ism_m_vals = [49.20, 48.70, 48.50, 49.60]
+trig_a5 = bool(ism_m_vals[-1] < 49.00)
+ism_m_spark = render_sparkline(ism_m_vals, unit="", fmt="{:.1f}")
 
 # 6. 美國 ISM 服務業 PMI (NMI)
-# (榮枯線 50.0，警訊 < 50.0)
-ism_s_t0, ism_s_t1, ism_s_t2, ism_s_t3 = 54.10, 53.80, 50.80, 49.40
-trig_a6 = bool(ism_s_t0 < 50.00)
-ism_s_past3_str = format_past_3(ism_s_t1, ism_s_t2, ism_s_t3, unit="")
+ism_s_vals = [49.40, 50.80, 53.80, 54.10]
+trig_a6 = bool(ism_s_vals[-1] < 50.00)
+ism_s_spark = render_sparkline(ism_s_vals, unit="", fmt="{:.1f}")
 
 count_lead = sum([trig_a1, trig_a2, trig_a3, trig_a4, trig_a5, trig_a6])
 
 # ==================== 模組 B：衰退確認池 (6項) ====================
 # 1. 初領失業金 4週均線
-c_t0, c_t1, c_t2, c_t3 = s_claims.iloc[-1], s_claims.iloc[-2], s_claims.iloc[-3], s_claims.iloc[-4]
+c_vals = [s_claims.iloc[-4]/10000, s_claims.iloc[-3]/10000, s_claims.iloc[-2]/10000, s_claims.iloc[-1]/10000]
 claims_52w_low = s_claims.tail(52).min()
-claims_rebound = (c_t0 - claims_52w_low) / claims_52w_low
+claims_rebound = (s_claims.iloc[-1] - claims_52w_low) / claims_52w_low
 trig_b1 = bool(claims_rebound >= 0.18)
-claims_past3_str = format_past_3(c_t1/10000, c_t2/10000, c_t3/10000, unit=" 萬人")
+c_spark = render_sparkline(c_vals, unit=" 萬人", fmt="{:.2f}")
 
 # 2. 短期失業人數 (15週以下 3MMA)
 uemp_3mma = s_uemp15.rolling(3).mean().dropna()
-u_t0, u_t1, u_t2, u_t3 = uemp_3mma.iloc[-1], uemp_3mma.iloc[-2], uemp_3mma.iloc[-3], uemp_3mma.iloc[-4]
+u_vals = [uemp_3mma.iloc[-4], uemp_3mma.iloc[-3], uemp_3mma.iloc[-2], uemp_3mma.iloc[-1]]
 uemp_min = uemp_3mma.tail(12).min()
-uemp_rebound = (u_t0 - uemp_min) / uemp_min
-trig_b2 = bool(uemp_rebound >= 0.12 and u_t0 > u_t1)
-uemp_past3_str = format_past_3(u_t1, u_t2, u_t3, unit=" 千人", fmt="{:,.0f}")
+uemp_rebound = (u_vals[-1] - uemp_min) / uemp_min
+trig_b2 = bool(uemp_rebound >= 0.12 and u_vals[-1] > u_vals[-2])
+u_spark = render_sparkline(u_vals, unit="k", fmt="{:,.0f}")
 
 # 3. 實質零售銷售年增率
 def get_retail_yoy(idx):
     return (s_retail.iloc[idx] - s_retail.iloc[idx-12]) / s_retail.iloc[idx-12] * 100
-r_yoy_t0 = get_retail_yoy(-1)
-r_yoy_t1 = get_retail_yoy(-2)
-r_yoy_t2 = get_retail_yoy(-3)
-r_yoy_t3 = get_retail_yoy(-4)
-trig_b3 = bool(r_yoy_t0 < 0.0)
-retail_past3_str = format_past_3(r_yoy_t1, r_yoy_t2, r_yoy_t3, unit="%", fmt="{:+.2f}")
+r_vals = [get_retail_yoy(-4), get_retail_yoy(-3), get_retail_yoy(-2), get_retail_yoy(-1)]
+trig_b3 = bool(r_vals[-1] < 0.0)
+r_spark = render_sparkline(r_vals, unit="%", fmt="{:+.2f}")
 
-# 4. 實質可支配所得年增率
+# 4. 實質個人可支配所得年增率
 def get_dpi_yoy(idx):
     return (s_dpi.iloc[idx] - s_dpi.iloc[idx-12]) / s_dpi.iloc[idx-12] * 100
-d_yoy_t0 = get_dpi_yoy(-1)
-d_yoy_t1 = get_dpi_yoy(-2)
-d_yoy_t2 = get_dpi_yoy(-3)
-d_yoy_t3 = get_dpi_yoy(-4)
-trig_b4 = bool(d_yoy_t0 < 0.0)
-dpi_past3_str = format_past_3(d_yoy_t1, d_yoy_t2, d_yoy_t3, unit="%", fmt="{:+.2f}")
+d_vals = [get_dpi_yoy(-4), get_dpi_yoy(-3), get_dpi_yoy(-2), get_dpi_yoy(-1)]
+trig_b4 = bool(d_vals[-1] < 0.0)
+d_spark = render_sparkline(d_vals, unit="%", fmt="{:+.2f}")
 
 # 5. 企業存貨/銷售比
-inv_t0, inv_t1, inv_t2, inv_t3 = s_isratio.iloc[-1], s_isratio.iloc[-2], s_isratio.iloc[-3], s_isratio.iloc[-4]
-trig_b5 = bool(inv_t0 > inv_t1 > inv_t2)
-inv_past3_str = format_past_3(inv_t1, inv_t2, inv_t3, unit="")
+inv_vals = [s_isratio.iloc[-4], s_isratio.iloc[-3], s_isratio.iloc[-2], s_isratio.iloc[-1]]
+trig_b5 = bool(inv_vals[-1] > inv_vals[-2] > inv_vals[-3])
+inv_spark = render_sparkline(inv_vals, unit="", fmt="{:.2f}")
 
 # 6. 高收益債利差
-hy_t0, hy_t1, hy_t2, hy_t3 = s_hy.iloc[-1], s_hy.iloc[-2], s_hy.iloc[-3], s_hy.iloc[-4]
-trig_b6 = bool(hy_t0 >= 4.50)
-hy_past3_str = format_past_3(hy_t1*100, hy_t2*100, hy_t3*100, unit=" bps", fmt="{:.0f}")
+hy_vals = [s_hy.iloc[-4]*100, s_hy.iloc[-3]*100, s_hy.iloc[-2]*100, s_hy.iloc[-1]*100]
+trig_b6 = bool(s_hy.iloc[-1] >= 4.50)
+hy_spark = render_sparkline(hy_vals, unit=" bps", fmt="{:.0f}")
 
 count_conf = sum([trig_b1, trig_b2, trig_b3, trig_b4, trig_b5, trig_b6])
 
 # ==================== 模組 C & D ====================
 fed_cut = (s_fedrate.tail(12).max() - s_fedrate.iloc[-1])
-hy_drop_val = (s_hy.tail(252).max() - hy_t0)
+hy_drop_val = (s_hy.tail(252).max() - s_hy.iloc[-1])
 claims_peak_12m = s_claims.tail(52).max()
 
 pce_yoy_curr = (s_pce.iloc[-1] - s_pce.iloc[-13]) / s_pce.iloc[-13] * 100 if len(s_pce) >= 13 else 0.0
@@ -177,12 +198,12 @@ pce_yoy_prev = (s_pce.iloc[-2] - s_pce.iloc[-14]) / s_pce.iloc[-14] * 100 if len
 fed_funds_curr = s_fedrate.iloc[-1]
 real_rate = fed_funds_curr - pce_yoy_curr
 
-# 4. 定位判定 (2/3 多數決)
+# 4. 定位判定
 if count_conf >= 4:
     regime = "🚨 衰退期 (Recession)"
     stock_w, def_w, cash_w = "0%", "60% (TLT+GLD+XLU)", "40%"
     note = "實體消費與就業全面惡化，全數撤退清倉防禦"
-elif count_lead >= 4:  # 6 項中達 4 項 (2/3)
+elif count_lead >= 4:
     regime = "⚠️ 榮景尾聲 (Late Boom)"
     stock_w, def_w, cash_w = "50%", "50% (TLT+GLD+XLU)", "0%"
     note = "領先警訊多數觸發，啟動 50% 規模化買保險機制"
@@ -209,14 +230,20 @@ html_content = f"""<!DOCTYPE html>
         .metric-title {{ font-size: 0.9em; color: #6c757d; margin-bottom: 5px; }}
         .metric-value {{ font-size: 1.3em; font-weight: bold; color: #0f172a; }}
         table {{ width: 100%; border-collapse: collapse; margin-top: 12px; }}
-        th, td {{ padding: 12px 14px; border: 1px solid #e2e8f0; text-align: left; }}
+        th, td {{ padding: 10px 12px; border: 1px solid #e2e8f0; text-align: left; vertical-align: middle; }}
         th {{ background-color: #f1f5f9; font-weight: 600; color: #334155; }}
         tr:hover {{ background-color: #f8fafc; }}
         .badge-red {{ color: #dc3545; font-weight: bold; }}
         .badge-green {{ color: #198754; font-weight: bold; }}
-        .history-tag {{ display: inline-block; background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-size: 0.85em; color: #475569; margin-right: 4px; }}
         .highlight-cell {{ background-color: #fef9c3 !important; font-weight: 600; border-left: 4px solid #eab308 !important; }}
-        .badge-new {{ display: inline-block; background-color: #eab308; color: #ffffff; font-size: 0.72em; padding: 2px 6px; border-radius: 4px; font-weight: bold; vertical-align: middle; margin-left: 6px; }}
+        .badge-new {{ display: inline-block; background-color: #eab308; color: #ffffff; font-size: 0.72em; padding: 2px 5px; border-radius: 4px; font-weight: bold; vertical-align: middle; margin-left: 4px; }}
+        
+        /* 迷你走勢圖樣式 */
+        .spark-wrapper {{ display: flex; flex-direction: column; gap: 2px; }}
+        .sparkline {{ overflow: visible; }}
+        .spark-labels {{ font-size: 0.8em; color: #64748b; font-family: monospace; white-space: nowrap; }}
+        .spark-labels b {{ color: #0f172a; }}
+        
         a {{ color: #0d6efd; text-decoration: none; }}
         a:hover {{ text-decoration: underline; }}
     </style>
@@ -247,51 +274,51 @@ html_content = f"""<!DOCTYPE html>
     <div class="card">
         <h2>⚠️ 模組 A：領先警訊池 (觸發: {count_lead}/6 ｜ 門檻: >= 4項啟動買保險)</h2>
         <table>
-            <tr><th>指標名稱</th><th>最新數據 (現況)</th><th>前 3 期數值走勢 (T-1 / T-2 / T-3)</th><th>判斷門檻</th><th>狀態燈號</th><th>數據連結</th></tr>
+            <tr><th>指標名稱</th><th>最新數據 (現況)</th><th>近 4 期趨勢走勢圖 (T-3 → 最新)</th><th>判斷門檻</th><th>狀態燈號</th><th>數據連結</th></tr>
             <tr>
                 <td>房市雙指標 (3MMA)</td>
-                {render_curr_cell(f"{h_t0/10:.2f} 萬戶 (回落 {h_drop*100:.2f}%)", (rec_permit or rec_houst))}
-                <td>{h_past3_str}</td>
+                {render_curr_cell(f"{h_vals[-1]:.2f} 萬戶 (回落 {h_drop*100:.1f}%)", (rec_permit or rec_houst))}
+                <td>{h_spark}</td>
                 <td>自高點回落 >= 12%</td>
                 <td class="{'badge-red' if trig_a1 else 'badge-green'}">{'🔴 觸發' if trig_a1 else '🟢 正常'}</td>
                 <td><a href="https://fred.stlouisfed.org/series/PERMIT" target="_blank">PERMIT</a> / <a href="https://fred.stlouisfed.org/series/HOUST" target="_blank">HOUST</a></td>
             </tr>
             <tr>
                 <td>核心耐久財新訂單 (3MMA YoY)</td>
-                {render_curr_cell(f"YoY {o_yoy_t0:+.2f}%", rec_orders)}
-                <td>{orders_past3_str}</td>
+                {render_curr_cell(f"YoY {o_vals[-1]:+.2f}%", rec_orders)}
+                <td>{o_spark}</td>
                 <td>年增率 < 0%</td>
                 <td class="{'badge-red' if trig_a2 else 'badge-green'}">{'🔴 觸發' if trig_a2 else '🟢 正常'}</td>
                 <td><a href="https://fred.stlouisfed.org/series/ANDENO" target="_blank">ANDENO</a></td>
             </tr>
             <tr>
                 <td>JOLTS 職位空缺數</td>
-                {render_curr_cell(f"{j_t0:,.0f} 千人", rec_jolts)}
-                <td>{jolts_past3_str}</td>
+                {render_curr_cell(f"{j_vals[-1]:,.0f} 千人", rec_jolts)}
+                <td>{j_spark}</td>
                 <td>跌破常態 (< 7,000 千人)</td>
                 <td class="{'badge-red' if trig_a3 else 'badge-green'}">{'🔴 觸發' if trig_a3 else '🟢 正常'}</td>
                 <td><a href="https://fred.stlouisfed.org/series/JTSJOL" target="_blank">JTSJOL</a></td>
             </tr>
             <tr>
                 <td>10Y-2Y 殖利率曲線陡峭化</td>
-                {render_curr_cell(f"{t10y2y_t0*100:.2f} bps", rec_t10y2y)}
-                <td>{t10y2y_past3_str}</td>
+                {render_curr_cell(f"{t_vals[-1]:.0f} bps", rec_t10y2y)}
+                <td>{t_spark}</td>
                 <td>近60天倒掛轉正且>10bps</td>
                 <td class="{'badge-red' if trig_a4 else 'badge-green'}">{'🔴 觸發' if trig_a4 else '🟢 正常'}</td>
                 <td><a href="https://fred.stlouisfed.org/series/T10Y2Y" target="_blank">T10Y2Y</a></td>
             </tr>
             <tr>
                 <td>美國 ISM 製造業採購經理人指數 (PMI)</td>
-                {render_curr_cell(f"{ism_m_t0:.2f}", False)}
-                <td>{ism_m_past3_str}</td>
+                {render_curr_cell(f"{ism_m_vals[-1]:.1f}", False)}
+                <td>{ism_m_spark}</td>
                 <td>跌破榮枯警戒 (< 49.00)</td>
                 <td class="{'badge-red' if trig_a5 else 'badge-green'}">{'🔴 觸發' if trig_a5 else '🟢 正常'}</td>
                 <td><a href="https://www.ismworld.org/supply-management-news-and-reports/reports/ism-report-on-business/pmi/" target="_blank">ISM Manufacturing</a></td>
             </tr>
             <tr>
                 <td>美國 ISM 服務業採購經理人指數 (PMI)</td>
-                {render_curr_cell(f"{ism_s_t0:.2f}", False)}
-                <td>{ism_s_past3_str}</td>
+                {render_curr_cell(f"{ism_s_vals[-1]:.1f}", False)}
+                <td>{ism_s_spark}</td>
                 <td>跌破榮枯線 (< 50.00)</td>
                 <td class="{'badge-red' if trig_a6 else 'badge-green'}">{'🔴 觸發' if trig_a6 else '🟢 正常'}</td>
                 <td><a href="https://www.ismworld.org/supply-management-news-and-reports/reports/ism-report-on-business/services/" target="_blank">ISM Services</a></td>
@@ -302,51 +329,51 @@ html_content = f"""<!DOCTYPE html>
     <div class="card">
         <h2>🚨 模組 B：衰退確認池 (觸發: {count_conf}/6 ｜ 門檻: >= 4項全面撤退)</h2>
         <table>
-            <tr><th>指標名稱</th><th>最新數據 (現況)</th><th>前 3 期數值走勢 (T-1 / T-2 / T-3)</th><th>判斷門檻</th><th>狀態燈號</th><th>FRED 連結</th></tr>
+            <tr><th>指標名稱</th><th>最新數據 (現況)</th><th>近 4 期趨勢走勢圖 (T-3 → 最新)</th><th>判斷門檻</th><th>狀態燈號</th><th>FRED 連結</th></tr>
             <tr>
                 <td>初領失業金 4週均線</td>
-                {render_curr_cell(f"{c_t0/10000:.2f} 萬人 (反彈 {claims_rebound*100:.2f}%)", rec_claims)}
-                <td>{claims_past3_str}</td>
+                {render_curr_cell(f"{c_vals[-1]:.2f} 萬人 (反彈 {claims_rebound*100:.1f}%)", rec_claims)}
+                <td>{c_spark}</td>
                 <td>自低點反彈 >= 18%</td>
                 <td class="{'badge-red' if trig_b1 else 'badge-green'}">{'🔴 觸發' if trig_b1 else '🟢 正常'}</td>
                 <td><a href="https://fred.stlouisfed.org/series/IC4WSA" target="_blank">IC4WSA</a></td>
             </tr>
             <tr>
                 <td>短期失業人數 (15週以下 3MMA)</td>
-                {render_curr_cell(f"{u_t0:,.0f} 千人 (反彈 {uemp_rebound*100:.2f}%)", rec_uemp15)}
-                <td>{uemp_past3_str}</td>
+                {render_curr_cell(f"{u_vals[-1]:,.0f} 千人 (反彈 {uemp_rebound*100:.1f}%)", rec_uemp15)}
+                <td>{u_spark}</td>
                 <td>自低點反彈 >= 12% 且向上</td>
                 <td class="{'badge-red' if trig_b2 else 'badge-green'}">{'🔴 觸發' if trig_b2 else '🟢 正常'}</td>
                 <td><a href="https://fred.stlouisfed.org/series/UEMP15T26" target="_blank">UEMP15T26</a></td>
             </tr>
             <tr>
                 <td>實質零售銷售年增率</td>
-                {render_curr_cell(f"實質 YoY {r_yoy_t0:+.2f}%", rec_retail)}
-                <td>{retail_past3_str}</td>
+                {render_curr_cell(f"實質 YoY {r_vals[-1]:+.2f}%", rec_retail)}
+                <td>{r_spark}</td>
                 <td>年增率 < 0.0%</td>
                 <td class="{'badge-red' if trig_b3 else 'badge-green'}">{'🔴 觸發' if trig_b3 else '🟢 正常'}</td>
                 <td><a href="https://fred.stlouisfed.org/series/RRSFS" target="_blank">RRSFS</a></td>
             </tr>
             <tr>
                 <td>實質個人可支配所得年增率</td>
-                {render_curr_cell(f"實質 DPI YoY {d_yoy_t0:+.2f}%", rec_dpi)}
-                <td>{dpi_past3_str}</td>
+                {render_curr_cell(f"實質 DPI YoY {d_vals[-1]:+.2f}%", rec_dpi)}
+                <td>{d_spark}</td>
                 <td>年增率 < 0.0%</td>
                 <td class="{'badge-red' if trig_b4 else 'badge-green'}">{'🔴 觸發' if trig_b4 else '🟢 正常'}</td>
                 <td><a href="https://fred.stlouisfed.org/series/DSPIC96" target="_blank">DSPIC96</a></td>
             </tr>
             <tr>
                 <td>企業存貨 / 銷售比</td>
-                {render_curr_cell(f"{inv_t0:.2f}", rec_isratio)}
-                <td>{inv_past3_str}</td>
+                {render_curr_cell(f"{inv_vals[-1]:.2f}", rec_isratio)}
+                <td>{inv_spark}</td>
                 <td>連續 3 個月被動積壓飆升</td>
                 <td class="{'badge-red' if trig_b5 else 'badge-green'}">{'🔴 觸發' if trig_b5 else '🟢 正常'}</td>
                 <td><a href="https://fred.stlouisfed.org/series/ISRATIO" target="_blank">ISRATIO</a></td>
             </tr>
             <tr>
                 <td>高收益債信用利差 (HY OAS)</td>
-                {render_curr_cell(f"{hy_t0*100:.2f} bps", rec_hy)}
-                <td>{hy_past3_str}</td>
+                {render_curr_cell(f"{hy_vals[-1]:.0f} bps", rec_hy)}
+                <td>{hy_spark}</td>
                 <td>利差突破 450 bps</td>
                 <td class="{'badge-red' if trig_b6 else 'badge-green'}">{'🔴 觸發' if trig_b6 else '🟢 正常'}</td>
                 <td><a href="https://fred.stlouisfed.org/series/BAMLH0A0HYM2" target="_blank">BAMLH0A0HYM2</a></td>
@@ -393,4 +420,4 @@ html_content = f"""<!DOCTYPE html>
 with open("index.html", "w", encoding="utf-8") as f:
     f.write(html_content)
 
-print("🎉 執行成功！已產出包含前3期走勢、近7日高亮更新與ISM雙指標的最新 index.html！")
+print("🎉 執行成功！已產出包含近4期SVG迷你走勢圖的最新 index.html！")
